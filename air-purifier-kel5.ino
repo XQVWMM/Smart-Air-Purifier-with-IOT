@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <math.h>
 #include <DHT.h>
+#include "ai_peringatan.h"   // model peringatan dini (butuh juga model_rf_peringatan.h di folder yang sama)
 
 // ===================== WIFI & DASHBOARD =====================
 const char* WIFI_SSID  = "*****";
@@ -33,6 +34,20 @@ float kelembapanRuangan = 0;
 bool  dhtValid = false;
 unsigned long waktuDHTTerakhir = 0;
 const unsigned long INTERVAL_DHT = 2000;   // DHT22 tidak boleh dibaca lebih cepat dari 2 detik
+
+// ===================== AI: PERINGATAN DINI (Random Forest) =====================
+// Model memprediksi peluang udara MEMBURUK dalam AI_HORIZON_MENIT menit. Jika peluang >= AI_AMBANG,
+// kipas dinaikkan ke PWM_ANTISIPASI lebih awal. Model HANYA menaikkan kipas, tidak pernah menurunkan:
+// aturan ambang batas di bawah tetap menjadi lantai pengaman.
+const float AI_AMBANG       = AI_AMBANG_DEFAULT;   // dari hasil training; naikkan jika kipas terlalu sering menyala
+const int   PWM_ANTISIPASI  = 110;                 // sekitar 43%
+const unsigned long INTERVAL_AI = 60000;           // model dievaluasi 1x per menit (sesuai data training)
+float sumDebu = 0, sumGas = 0, sumSuhu = 0, sumLembap = 0;
+int   cntSensor = 0, cntDHT = 0;
+unsigned long waktuAITerakhir = 0;
+float aiPeluang = 0;
+bool  aiAktif = false;       // true jika riwayat 6 menit penuh dan status belum "Berat"
+bool  aiAntisipasi = false;  // true jika kipas sedang dinaikkan oleh AI
 
 const int PWM_FREQ  = 5000;
 const int PWM_RES   = 8;
@@ -135,6 +150,38 @@ void bacaDHT() {
   }
 }
 
+// 0 = Udara Bersih, 1 = Polusi Ringan, 2 = Polusi Berat (aturan yang sama dengan di loop)
+int levelUdara(float debu, float gas) {
+  if (debu >= BATAS_DEBU_BERAT || gas >= BATAS_GAS_BERAT) return 2;
+  if (debu >= BATAS_DEBU_RINGAN || gas >= BATAS_GAS_RINGAN) return 1;
+  return 0;
+}
+
+// Dipanggil tiap siklus: kumpulkan pembacaan untuk dirata-rata per menit
+void kumpulkanAI(float debu, float gas) {
+  sumDebu += debu; sumGas += gas; cntSensor++;
+  if (dhtValid) { sumSuhu += suhuRuangan; sumLembap += kelembapanRuangan; cntDHT++; }
+}
+
+// Tiap menit: simpan rata-rata ke riwayat, lalu hitung peluang udara memburuk
+void evaluasiAI() {
+  if (millis() - waktuAITerakhir < INTERVAL_AI) return;
+  waktuAITerakhir = millis();
+
+  if (cntSensor == 0 || cntDHT == 0) {      // menit tanpa data lengkap -> riwayat diulang agar tren tidak palsu
+    aiReset(); aiAktif = false; aiPeluang = 0;
+  } else {
+    float debu = sumDebu / cntSensor, gas = sumGas / cntSensor;
+    aiTambahMenit(debu, gas, sumSuhu / cntDHT, sumLembap / cntDHT);
+    int sev = levelUdara(debu, gas);
+    aiAktif = aiSiap() && sev < 2;
+    aiPeluang = aiAktif ? aiHitungPeluang(sev) : 0;
+    Serial.printf("[AI] menit baru | riwayat %d/%d | peluang memburuk %d menit lagi: %.0f%% (ambang %.0f%%)\n",
+                  aiJumlah, AI_N, AI_HORIZON_MENIT, aiPeluang * 100, AI_AMBANG * 100);
+  }
+  sumDebu = sumGas = sumSuhu = sumLembap = 0; cntSensor = cntDHT = 0;
+}
+
 bool dataValidUntukDikirim(float debu, float gas) {
   if (isnan(debu) || isinf(debu) || isnan(gas) || isinf(gas)) return false;
   if (debu < 0 || gas < 0) return false;
@@ -181,7 +228,11 @@ void kirimKeDashboard(float debu, float gasPPM, String status, int pwm) {
   http.addHeader("X-API-Key", API_KEY);
   status.trim();
   String json = "{\"debu\":" + String(debu,1) + ",\"gas\":" + String(gasPPM,1) +
-                ",\"status\":\"" + status + "\",\"pwm\":" + String(pwm) + ",\"saklar\":0}";
+                ",\"status\":\"" + status + "\",\"pwm\":" + String(pwm);
+  if (dhtValid) {
+    json += ",\"suhu\":" + String(suhuRuangan, 1) + ",\"kelembapan\":" + String(kelembapanRuangan, 1);
+  }
+  json += "}";
   int kode = http.POST(json);
   lastHttpCode = kode;
   if (kode == 200) jumlahKirimOK++; else jumlahKirimGagal++;
@@ -271,6 +322,27 @@ void gambarFooter(bool wifiOn) {
   tft.print(tx);
 }
 
+// Baris status AI di paling bawah layar
+void gambarAI() {
+  tft.fillRect(0, 120, 160, 8, WARNA_KOTAK_BG);
+  tft.setCursor(6, 120);
+  char b[28];
+  if (!aiSiap()) {
+    tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG);
+    sprintf(b, "AI: kumpul data %d/%d", aiJumlah, AI_N);
+  } else if (!aiAktif) {
+    tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG);
+    sprintf(b, "AI: -");
+  } else if (aiAntisipasi) {
+    tft.setTextColor(ST7735_YELLOW, WARNA_KOTAK_BG);
+    sprintf(b, "AI: WASPADA %d%% kipas+", (int)(aiPeluang * 100));
+  } else {
+    tft.setTextColor(ST7735_GREEN, WARNA_KOTAK_BG);
+    sprintf(b, "AI: aman %d%%", (int)(aiPeluang * 100));
+  }
+  tft.print(b);
+}
+
 // ------------------------------------------------------------------
 // SETUP
 // ------------------------------------------------------------------
@@ -317,6 +389,12 @@ void loop() {
     statusUdara = "Udara Bersih"; warnaStatus = ST7735_GREEN; fanSpeedPWM = PWM_PELAN;
   }
 
+  // AI peringatan dini: hanya MENAIKKAN kipas jika udara diperkirakan memburuk
+  kumpulkanAI(dustDensity, gasPPM);
+  evaluasiAI();
+  aiAntisipasi = aiAktif && aiPeluang >= AI_AMBANG && fanSpeedPWM < PWM_ANTISIPASI;
+  if (aiAntisipasi) fanSpeedPWM = PWM_ANTISIPASI;
+
   int persen = map(fanSpeedPWM, 0, 255, 0, 100);
   ledcWrite(PIN_FAN_PWM, fanSpeedPWM);
   bool wifiOn = (WiFi.status() == WL_CONNECTED);
@@ -328,6 +406,7 @@ void loop() {
     gambarNilaiLingkungan();
     gambarKipas(persen);
     gambarFooter(wifiOn);
+    gambarAI();
   }
 
   if (statusUdara != statusUdaraSebelumnya) {
@@ -344,7 +423,7 @@ void loop() {
   } else {
     Serial.println("  Suhu   : -- (sensor DHT22 belum terbaca)");
   }
-  Serial.printf("  Status : %s | Kipas: %d%% (OTOMATIS) | WiFi: %s\n", statusUdara.c_str(), persen, wifiOn?"OK":"PUTUS");
+  Serial.printf("  Status : %s | Kipas: %d%% (%s) | WiFi: %s\n", statusUdara.c_str(), persen, aiAntisipasi?"OTOMATIS + AI":"OTOMATIS", wifiOn?"OK":"PUTUS");
   Serial.println("------------------------------------------------------------");
 
   if (millis() - waktuKirimTerakhir >= INTERVAL_KIRIM) {
