@@ -5,12 +5,13 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <math.h>
+#include <DHT.h>
 
 // ===================== WIFI & DASHBOARD =====================
 const char* WIFI_SSID  = "*****";
-const char* WIFI_PASS  = "*****";
+const char* WIFI_PASS  = "***";
 const char* SERVER_URL = "******";
-const char* API_KEY    = "********";
+const char* API_KEY    = "******";
 const unsigned long INTERVAL_KIRIM = 1000;
 
 #define TFT_CS    5
@@ -21,6 +22,17 @@ const int PIN_MQ7      = 34;
 const int PIN_DUST_VO  = 35;
 const int PIN_DUST_LED = 12;
 const int PIN_FAN_PWM  = 17;
+
+// ===================== SENSOR SUHU & KELEMBAPAN (DHT22) =====================
+#define PIN_DHT   4
+#define TIPE_DHT  DHT22
+DHT dht(PIN_DHT, TIPE_DHT);
+
+float suhuRuangan = 0;
+float kelembapanRuangan = 0;
+bool  dhtValid = false;
+unsigned long waktuDHTTerakhir = 0;
+const unsigned long INTERVAL_DHT = 2000;   // DHT22 tidak boleh dibaca lebih cepat dari 2 detik
 
 const int PWM_FREQ  = 5000;
 const int PWM_RES   = 8;
@@ -106,6 +118,23 @@ float bacaDustDensity() {
   return dustDensity;
 }
 
+void bacaDHT() {
+  if (millis() - waktuDHTTerakhir < INTERVAL_DHT) return;
+  waktuDHTTerakhir = millis();
+
+  float s = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  if (isnan(s) || isnan(h)) {
+    dhtValid = false;
+    Serial.println("[DHT22] Gagal membaca sensor, cek kabel OUT ke GPIO 4.");
+  } else {
+    suhuRuangan = s;
+    kelembapanRuangan = h;
+    dhtValid = true;
+  }
+}
+
 bool dataValidUntukDikirim(float debu, float gas) {
   if (isnan(debu) || isinf(debu) || isnan(gas) || isinf(gas)) return false;
   if (debu < 0 || gas < 0) return false;
@@ -160,6 +189,9 @@ void kirimKeDashboard(float debu, float gasPPM, String status, int pwm) {
   http.end();
 }
 
+// ------------------------------------------------------------------
+// TAMPILAN TFT (layout dirapatkan agar muat baris suhu & kelembapan)
+// ------------------------------------------------------------------
 void gambarHeader() {
   tft.fillRect(0, 0, 160, 16, WARNA_HEADER);
   tft.setTextSize(1); tft.setTextColor(WARNA_TEKS, WARNA_HEADER);
@@ -167,64 +199,87 @@ void gambarHeader() {
 }
 
 void gambarKartuStatus(String status, uint16_t warna) {
-  tft.fillRoundRect(4, 20, 152, 16, 4, warna);
+  tft.fillRoundRect(4, 18, 152, 14, 3, warna);
   tft.setTextColor(ST7735_BLACK, warna); tft.setTextSize(1);
   int16_t x1,y1; uint16_t w,h; String t = status; t.trim();
   tft.getTextBounds(t, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(4 + (152-w)/2, 25); tft.print(t);
+  tft.setCursor(4 + (152-w)/2, 21); tft.print(t);
 }
 
 void gambarNilaiSensor(float debu, float gasPPM) {
   tft.setTextSize(1);
-  tft.setCursor(6, 42); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("DEBU");
-  tft.setCursor(90, 42); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("GAS CO");
+  tft.setCursor(6, 36);  tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("DEBU");
+  tft.setCursor(90, 36); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("GAS CO");
 
-  tft.fillRect(6, 52, 80, 10, WARNA_KOTAK_BG);
-  tft.fillRect(90, 52, 68, 10, WARNA_KOTAK_BG);
+  tft.fillRect(6, 44, 80, 9, WARNA_KOTAK_BG);
+  tft.fillRect(90, 44, 68, 9, WARNA_KOTAK_BG);
 
-  tft.setCursor(6, 53); tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
+  tft.setCursor(6, 45);  tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
   char b1[16]; sprintf(b1, "%.1f ug/m3", debu); tft.print(b1);
 
-  tft.setCursor(90, 53); tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
+  tft.setCursor(90, 45); tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
   char b2[16]; sprintf(b2, "%.1f ppm", gasPPM); tft.print(b2);
+}
 
-  tft.drawFastHLine(0, 66, 160, WARNA_ABU);
+void gambarNilaiLingkungan() {
+  tft.setTextSize(1);
+  tft.setCursor(6, 56);  tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("SUHU");
+  tft.setCursor(90, 56); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("KELEMBAPAN");
+
+  tft.fillRect(6, 64, 80, 9, WARNA_KOTAK_BG);
+  tft.fillRect(90, 64, 68, 9, WARNA_KOTAK_BG);
+
+  tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
+  tft.setCursor(6, 65);
+  if (dhtValid) { char b1[16]; sprintf(b1, "%.1f C", suhuRuangan); tft.print(b1); }
+  else          { tft.print("-- C"); }
+
+  tft.setCursor(90, 65);
+  if (dhtValid) { char b2[16]; sprintf(b2, "%.0f %%", kelembapanRuangan); tft.print(b2); }
+  else          { tft.print("-- %"); }
+
+  tft.drawFastHLine(0, 76, 160, WARNA_ABU);
 }
 
 void gambarKipas(int persen) {
   tft.setTextSize(1);
-  tft.setCursor(6, 72); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("KECEPATAN KIPAS (OTOMATIS)");
+  tft.setCursor(6, 80); tft.setTextColor(WARNA_ABU, WARNA_KOTAK_BG); tft.print("KECEPATAN KIPAS (OTOMATIS)");
 
-  tft.drawRect(6, 84, 120, 10, WARNA_TEKS);
-  tft.fillRect(7, 85, 118, 8, WARNA_KOTAK_BG);
+  tft.drawRect(6, 90, 120, 10, WARNA_TEKS);
+  tft.fillRect(7, 91, 118, 8, WARNA_KOTAK_BG);
   int lebar = map(persen, 0, 100, 0, 118);
   uint16_t w = (persen>70?ST7735_RED:(persen>35?ST7735_YELLOW:ST7735_GREEN));
-  tft.fillRect(7, 85, lebar, 8, w);
+  tft.fillRect(7, 91, lebar, 8, w);
 
-  tft.fillRect(128, 84, 32, 10, WARNA_KOTAK_BG);
-  tft.setCursor(130, 85); tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
+  tft.fillRect(128, 90, 32, 10, WARNA_KOTAK_BG);
+  tft.setCursor(130, 91); tft.setTextColor(WARNA_TEKS, WARNA_KOTAK_BG);
   char b[6]; sprintf(b, "%3d%%", persen); tft.print(b);
 }
 
 void gambarFooter(bool wifiOn) {
-  tft.drawFastHLine(0, 100, 160, WARNA_ABU);
+  tft.drawFastHLine(0, 106, 160, WARNA_ABU);
 
-  tft.fillRect(6, 104, 60, 8, WARNA_KOTAK_BG);
-  tft.setCursor(6, 104);
+  tft.fillRect(6, 112, 60, 8, WARNA_KOTAK_BG);
+  tft.setCursor(6, 112);
   tft.setTextColor(wifiOn?ST7735_GREEN:ST7735_RED, WARNA_KOTAK_BG);
   tft.print(wifiOn ? "WiFi OK" : "WiFi OFF");
 
-  tft.fillRect(70, 104, 84, 8, WARNA_KOTAK_BG);
-  tft.setCursor(70, 104);
+  tft.fillRect(70, 112, 84, 8, WARNA_KOTAK_BG);
+  tft.setCursor(70, 112);
   String tx = lastHttpCode==200 ? "TX:200" : (lastHttpCode==-1 ? "TX:NoWiFi" : (lastHttpCode==0?"TX:---":"TX:ERR"));
   tft.setTextColor(lastHttpCode==200?ST7735_GREEN:ST7735_RED, WARNA_KOTAK_BG);
   tft.print(tx);
 }
 
+// ------------------------------------------------------------------
+// SETUP
+// ------------------------------------------------------------------
 void setup() {
   Serial.begin(115200); delay(300);
   pinMode(PIN_DUST_LED, OUTPUT);
   digitalWrite(PIN_DUST_LED, HIGH);
+
+  dht.begin();
 
   ledcAttach(PIN_FAN_PWM, PWM_FREQ, PWM_RES);
   ledcWrite(PIN_FAN_PWM, PWM_PENUH); delay(500); ledcWrite(PIN_FAN_PWM, PWM_PELAN);
@@ -237,9 +292,13 @@ void setup() {
   waktuMulai = millis();
 }
 
+// ------------------------------------------------------------------
+// LOOP UTAMA
+// ------------------------------------------------------------------
 void loop() {
   siklusKe++;
   jagaKoneksiWiFi();
+  bacaDHT();
 
   float rsGas   = bacaRsMQ7();
   float gasPPM  = konversiKePPM(rsGas);
@@ -266,6 +325,7 @@ void loop() {
     waktuTFTTerakhir = millis();
     gambarKartuStatus(statusUdara, warnaStatus);
     gambarNilaiSensor(dustDensity, gasPPM);
+    gambarNilaiLingkungan();
     gambarKipas(persen);
     gambarFooter(wifiOn);
   }
@@ -279,6 +339,11 @@ void loop() {
   Serial.printf("Siklus #%d | Uptime: %s | Ditolak: %d\n", siklusKe, formatUptime(millis()-waktuMulai).c_str(), jumlahDataDitolak);
   Serial.printf("  Debu   : %.1f ug/m3\n", dustDensity);
   Serial.printf("  Gas CO : %.1f ppm  (Rs=%.0f ohm, Rs/R0=%.3f)\n", gasPPM, rsGas, rsGas/R0_MQ7);
+  if (dhtValid) {
+    Serial.printf("  Suhu   : %.1f C | Kelembapan: %.1f %%\n", suhuRuangan, kelembapanRuangan);
+  } else {
+    Serial.println("  Suhu   : -- (sensor DHT22 belum terbaca)");
+  }
   Serial.printf("  Status : %s | Kipas: %d%% (OTOMATIS) | WiFi: %s\n", statusUdara.c_str(), persen, wifiOn?"OK":"PUTUS");
   Serial.println("------------------------------------------------------------");
 
