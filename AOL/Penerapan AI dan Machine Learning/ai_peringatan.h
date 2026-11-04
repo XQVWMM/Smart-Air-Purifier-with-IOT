@@ -1,9 +1,3 @@
-// ai_peringatan.h - Peringatan dini udara memburuk (Random Forest) untuk ESP32
-// Letakkan file ini DAN model_rf_peringatan.h di folder yang sama dengan file .ino.
-//
-// Cara kerja: tiap menit, simpan nilai rata-rata debu/gas/suhu/kelembapan. Setelah 6 menit
-// terkumpul, hitung tren lalu minta model menghitung peluang udara MEMBURUK dalam
-// AI_HORIZON_MENIT menit. Urutan fitur harus persis sama dengan train_peringatan_dini.py.
 #pragma once
 #include <math.h>
 #include "model_rf_peringatan.h"
@@ -18,12 +12,10 @@ float aiSuhu[AI_N];
 float aiLembap[AI_N];
 int   aiJumlah = 0;
 
-// Kosongkan riwayat (dipanggil saat ada menit tanpa data valid, agar tren tidak palsu)
 void aiReset() {
   aiJumlah = 0;
 }
 
-// Tambah satu menit data (nilai rata-rata menit itu)
 void aiTambahMenit(float debu, float gas, float suhu, float lembap) {
   if (aiJumlah < AI_N) {
     aiJumlah++;

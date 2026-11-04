@@ -1,4 +1,3 @@
-"""Eksperimen: apakah model prediksi 5 menit ke depan lebih baik dari 'status sekarang = status nanti'?"""
 from datetime import timedelta
 import numpy as np, pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -11,7 +10,6 @@ df = pd.read_csv("dataset_air_purifier_10000.csv", parse_dates=["waktu"]).sort_v
 df = df.dropna(subset=["debu", "gas", "suhu", "kelembapan"]).reset_index(drop=True)
 df["sev"] = df["status"].map(SEV)
 
-# fitur tren dihitung hanya jika selisih waktunya memang 1/5 menit (celah data tidak ikut)
 for kol in ("debu", "gas"):
     for n in (1, 3, 5):
         d = df[kol].diff(n)
@@ -34,7 +32,7 @@ y_tr, y_te = tr["sev_nanti"], te["sev_nanti"]
 
 def laporan(nama, pred):
     f1 = f1_score(y_te, pred, average="macro", zero_division=0)
-    naik = (y_te > te["sev"]).to_numpy()                # kejadian: udara akan MEMBURUK dalam 5 menit
+    naik = (y_te > te["sev"]).to_numpy()               
     tertangkap = ((pred > te["sev"].to_numpy()) & naik).sum()
     alarm = (pred > te["sev"].to_numpy())
     palsu = (alarm & ~naik).sum()

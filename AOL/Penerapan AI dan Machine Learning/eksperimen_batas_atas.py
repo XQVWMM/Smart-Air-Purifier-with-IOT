@@ -1,4 +1,3 @@
-"""Seberapa jauh peringatan dini bisa ditingkatkan? Bandingkan model kecil (ESP32) vs model besar + fitur riwayat panjang."""
 from datetime import timedelta
 import numpy as np, pandas as pd
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
@@ -14,7 +13,6 @@ df["sev"] = df["status"].map(SEV)
 def sel(kol, n):
     x = df[kol].diff(n); x[(df["waktu"] - df["waktu"].shift(n)) != timedelta(minutes=n)] = np.nan; return x
 
-# --- fitur dasar (sama dengan model di ESP32)
 for k in ("debu", "gas"):
     for n in (1, 3, 5): df[f"{k}_d{n}"] = sel(k, n)
     df[f"{k}_acc"] = df[f"{k}_d1"] - (df[f"{k}_d5"] - df[f"{k}_d1"]) / 4
@@ -24,12 +22,11 @@ df["debu_proj"], df["gas_proj"] = (df["debu"] + 5 * df["debu_d1"]) / 35, (df["ga
 BASE = ["debu", "gas", "suhu", "kelembapan", "sev", "debu_d1", "debu_d3", "debu_d5", "gas_d1", "gas_d3", "gas_d5",
         "debu_acc", "gas_acc", "suhu_d5", "lembap_d5", "debu_ke35", "gas_ke3", "debu_proj", "gas_proj"]
 
-# --- fitur riwayat panjang (10 menit): maks/min/std jendela, selisih 10 menit, lonjakan terakhir
 for k in ("debu", "gas"):
     df[f"{k}_d10"] = sel(k, 10)
     r = df[k].rolling(10)
     df[f"{k}_max10"], df[f"{k}_min10"], df[f"{k}_std10"] = r.max(), r.min(), r.std()
-    df[f"{k}_rel1"] = df[f"{k}_d1"] / (df[k].shift(1) + 1)          # laju naik relatif
+    df[f"{k}_rel1"] = df[f"{k}_d1"] / (df[k].shift(1) + 1)       
     df[f"{k}_naikberturut"] = (df[f"{k}_d1"] > 0).astype(int).rolling(3).sum()
 PANJANG = BASE + [f"{k}_{s}" for k in ("debu", "gas") for s in ("d10", "max10", "min10", "std10", "rel1", "naikberturut")]
 
@@ -47,7 +44,7 @@ def uji(nama, fitur, buat):
         oof[te] = buat().fit(d.loc[tr, fitur], d.loc[tr, "naik"]).predict_proba(d.loc[te, fitur])[:, 1]
     ok = ~np.isnan(oof); y, p = d.loc[ok, "naik"].to_numpy(), oof[ok]
     h = ok.sum() / 1440
-    # recall pada ambang yang menghasilkan ~20 alarm palsu/hari
+
     best = 0.0; pre = 0.0
     for th in np.linspace(0.02, 0.98, 97):
         a = p >= th; fp = (a & (y == 0)).sum() / h

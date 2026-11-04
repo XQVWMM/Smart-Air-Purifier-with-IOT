@@ -1,26 +1,10 @@
-"""
-Training Random Forest untuk Smart Air Purifier
-================================================
-Input : dataset_air_purifier_10000.csv  (waktu, debu, gas, suhu, kelembapan, status, pwm)
-Output: folder hasil_training/ berisi model, grafik, metrik, dan header C++ untuk ESP32.
-
-Dua mode (ubah HORIZON_MENIT di bagian KONFIGURASI):
-  HORIZON_MENIT = 0  -> klasifikasi status udara SAAT INI dari 4 sensor
-  HORIZON_MENIT > 0  -> prediksi status udara N MENIT KE DEPAN (memakai tren + jam)
-
-Instalasi:
-  pip install pandas numpy scikit-learn matplotlib joblib
-Jalankan:
-  python train_random_forest.py
-"""
-
 import json
 from datetime import timedelta
 from pathlib import Path
 
 import joblib
 import matplotlib
-matplotlib.use("Agg")          # simpan grafik ke file, tanpa membuka jendela
+matplotlib.use("Agg")        
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -35,7 +19,7 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 # =============================================================================
 # 1. KONFIGURASI
 # =============================================================================
-CSV_PATH = "dataset_air_purifier_10000.csv"   # pakai versi koma/titik, BUKAN versi _excel
+CSV_PATH = "dataset_air_purifier_10000.csv"   
 OUT_DIR = Path("hasil_training")
 HORIZON_MENIT = 0          # 0 = status saat ini; mis. 5 = prediksi 5 menit ke depan
 SAMPLE_DETIK = 60          # jarak antar baris pada dataset
@@ -60,7 +44,7 @@ def judul(teks):
 # =============================================================================
 judul("1. MEMUAT DATA")
 df = pd.read_csv(CSV_PATH)
-if "waktu" not in df.columns:   # file versi Excel: pemisah ';' dan desimal ','
+if "waktu" not in df.columns:   
     print("Header tidak terbaca dengan koma, mencoba format Excel (sep=';', decimal=',')")
     df = pd.read_csv(CSV_PATH, sep=";", decimal=",")
 if "waktu" not in df.columns:
@@ -120,11 +104,10 @@ print(f"Baris siap training: {len(df)}")
 # 4. PEMBAGIAN DATA (BERURUTAN WAKTU, BUKAN ACAK)
 # =============================================================================
 judul("3. PEMBAGIAN DATA LATIH / UJI")
-# Data sensor adalah deret waktu: mengacak baris membuat baris bertetangga
-# (yang hampir kembar) masuk ke latih dan uji sekaligus -> skor terlihat terlalu bagus.
+
 n_uji = int(len(df) * TEST_RATIO)
 train, test = df.iloc[:-n_uji], df.iloc[-n_uji:]
-if HORIZON_MENIT > 0:   # beri jarak agar label latih tidak "mengintip" periode uji
+if HORIZON_MENIT > 0:  
     train = train.iloc[: -((HORIZON_MENIT * 60) // SAMPLE_DETIK)]
 
 X_train, y_train = train[FITUR], train["target"]
@@ -247,8 +230,6 @@ print("Muat ulang model nanti dengan:  d = joblib.load('hasil_training/model_rf.
 # 11. MODEL KECIL UNTUK ESP32 + EKSPOR KE C++
 # =============================================================================
 judul("10. MODEL KECIL UNTUK ESP32")
-# Model hasil tuning (100-300 pohon) terlalu besar untuk mikrokontroler.
-# Latih versi ringkas: sedikit pohon, kedalaman dibatasi.
 kecil = RandomForestClassifier(n_estimators=15, max_depth=8, min_samples_leaf=5,
                                class_weight="balanced", random_state=SEED, n_jobs=-1)
 kecil.fit(X_train, y_train)
@@ -266,7 +247,7 @@ def pohon_ke_cpp(est, nama):
 
     def rec(node, indent):
         pad = "  " * indent
-        if t.children_left[node] == -1:                      # daun
+        if t.children_left[node] == -1:                     
             nilai = t.value[node][0]
             nilai = nilai / nilai.sum()
             for i, p in enumerate(nilai):
@@ -322,7 +303,6 @@ header.append("  return terbaik;")
 header.append("}")
 (OUT_DIR / "model_rf_esp32.h").write_text("\n".join(header), encoding="utf-8")
 
-# Verifikasi: logika ekspor harus sama dengan prediksi sklearn
 contoh = X_test.to_numpy()[:500]
 cocok = np.mean([kecil.classes_[np.argmax(votes_manual(kecil, x))] == p
                  for x, p in zip(contoh, kecil.predict(X_test.iloc[:500]))])

@@ -1,6 +1,3 @@
-// Dibuat otomatis oleh train_peringatan_dini.py - JANGAN diedit manual.
-// Peluang udara MEMBURUK dalam 5 menit. Urutan fitur x[]:
-//   0=debu, 1=gas, 2=suhu, 3=kelembapan, 4=sev, 5=debu_d1, 6=debu_d3, 7=debu_d5, 8=gas_d1, 9=gas_d3, 10=gas_d5, 11=debu_acc, 12=gas_acc, 13=suhu_d5, 14=lembap_d5, 15=debu_ke35, 16=gas_ke3, 17=debu_proj, 18=gas_proj
 #pragma once
 
 #define AI_HORIZON_MENIT 5

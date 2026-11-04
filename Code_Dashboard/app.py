@@ -9,15 +9,15 @@ import pandas as pd
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 
-API_KEY = os.environ.get("API_KEY", "")   # diisi lewat Settings > Secrets di Hugging Face
+API_KEY = os.environ.get("API_KEY", "")   
 CSV_FILE = "data_sensor.csv"
-# Urutan kolom CSV: 4 fitur sensor, lalu status & pwm (label hasil aturan ESP32)
+
 KOLOM = ["waktu", "debu", "gas", "suhu", "kelembapan", "status", "pwm"]
 WIB = timezone(timedelta(hours=7))
 
-data = deque(maxlen=720)  # data terakhir yang ditampilkan (720 x 5 detik = 1 jam)
+data = deque(maxlen=720) 
 
-# Jika CSV lama (tanpa kolom suhu/kelembapan) masih ada, amankan dulu agar kolomnya tidak tercampur
+
 if os.path.exists(CSV_FILE):
     with open(CSV_FILE, newline="") as f:
         _header = next(csv.reader(f), [])
@@ -28,9 +28,7 @@ if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, "w", newline="") as f:
         csv.writer(f).writerow(KOLOM)
 
-# ===================== SYARAT ZEROGPU =====================
-# ZeroGPU mewajibkan minimal satu fungsi bertanda @spaces.GPU.
-# Fungsi ini tidak pernah dipanggil, jadi kuota GPU tidak terpakai.
+
 @spaces.GPU
 def _syarat_zerogpu():
     return None
@@ -38,9 +36,9 @@ def _syarat_zerogpu():
 # ===================== DASHBOARD =====================
 IKON = {"Udara Bersih": "🟢", "Polusi Ringan": "🟡", "Polusi Berat": "🔴"}
 
-# Harus sama dengan batas di kode ESP32
-BATAS_DEBU_RINGAN, BATAS_DEBU_BERAT = 35.0, 100.0     # µg/m³
-BATAS_GAS_RINGAN, BATAS_GAS_BERAT = 3.0, 7.0          # ppm CO
+
+BATAS_DEBU_RINGAN, BATAS_DEBU_BERAT = 35.0, 100.0    
+BATAS_GAS_RINGAN, BATAS_GAS_BERAT = 3.0, 7.0          
 BATAS_MAKSIMAL_DEBU, BATAS_MAKSIMAL_GAS = 1000.0, 2000.0
 jumlah_ditolak = 0
 
@@ -105,7 +103,6 @@ with gr.Blocks(title="Smart Air Purifier") as demo:
     demo.load(update, outputs=keluaran)
 
 
-# ===================== API: daftarkan ke internal FastAPI Gradio =====================
 def _register_api(app_obj):
     @app_obj.post("/api/data")
     async def terima_data(request: Request):
@@ -118,7 +115,7 @@ def _register_api(app_obj):
             gas = float(isi.get("gas", 0))
         except (TypeError, ValueError):
             debu = gas = float("nan")
-        # Validasi kedua di server (sama seperti dataValidUntukDikirim di ESP32)
+
         if not (0 <= debu <= BATAS_MAKSIMAL_DEBU and 0 <= gas <= BATAS_MAKSIMAL_GAS):
             jumlah_ditolak += 1
             raise HTTPException(status_code=422, detail="Nilai sensor di luar rentang wajar")
@@ -144,10 +141,7 @@ def _register_api(app_obj):
     del app_obj.router.routes[-2:]
     app_obj.router.routes[0:0] = rute_kita
 
-# ===================== LAUNCH =====================
-# Gunakan demo.launch() agar Gradio handle port 7860 sendiri —
-# menghindari konflik bind yang terjadi saat gr.mount_gradio_app + uvicorn.run()
-# dipanggil bersamaan di Gradio versi baru.
+
 _result = demo.launch(
     server_name="0.0.0.0",
     server_port=7860,
@@ -156,14 +150,12 @@ _result = demo.launch(
     ssr_mode=False,
 )
 
-# Coba akses internal FastAPI Gradio untuk mendaftarkan /api/data & /api/csv
-# Gradio 3.x / 4.x  : launch() mengembalikan (app, local_url, share_url)
-# Gradio 5.x / 6.x  : bisa via demo.server.app atau demo.app
+
 _app = None
 
 if isinstance(_result, tuple) and _result:
     _candidate = _result[0]
-    if hasattr(_candidate, "add_api_route"):   # FastAPI instance
+    if hasattr(_candidate, "add_api_route"):   
         _app = _candidate
 
 if _app is None and hasattr(demo, "server") and demo.server is not None:
@@ -179,5 +171,4 @@ if _app is not None:
 else:
     print("⚠ Tidak bisa mendaftarkan API routes — cek versi Gradio.")
 
-# Blokir thread agar proses tetap hidup
 demo.block_thread()

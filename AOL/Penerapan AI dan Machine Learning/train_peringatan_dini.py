@@ -1,16 +1,3 @@
-"""
-Model PERINGATAN DINI untuk Smart Air Purifier
-===============================================
-Tugas  : memprediksi peluang udara MEMBURUK dalam H menit ke depan
-         (Bersih -> Ringan/Berat, atau Ringan -> Berat), dari tren 6 menit terakhir.
-Dipakai: ESP32 hanya MENAIKKAN kecepatan kipas jika peluang >= ambang. Aturan ambang batas
-         tetap menjadi lantai pengaman (model tidak pernah menurunkan kipas).
-Output : hasil_peringatan/model_rf_peringatan.h   (model, otomatis)
-         hasil_peringatan/metrik_peringatan.json
-         hasil_peringatan/uji_paritas.csv         (contoh data untuk mencocokkan ESP32 vs Python)
-
-Jalankan: python train_peringatan_dini.py [path_csv]
-"""
 import json
 import sys
 from datetime import timedelta
@@ -23,25 +10,21 @@ from sklearn.model_selection import TimeSeriesSplit
 
 CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else "dataset_air_purifier_10000.csv"
 OUT = Path("hasil_peringatan"); OUT.mkdir(exist_ok=True)
-H = 5                       # menit ke depan
+H = 5                     
 MAKS_ALARM_PALSU_PER_HARI = 30
 SEED = 42
 SEV = {"Udara Bersih": 0, "Polusi Ringan": 1, "Polusi Berat": 2}
 
-# Urutan fitur: HARUS sama persis dengan ai_peringatan.h di ESP32
 FIT = ["debu", "gas", "suhu", "kelembapan", "sev",
        "debu_d1", "debu_d3", "debu_d5", "gas_d1", "gas_d3", "gas_d5", "debu_acc", "gas_acc",
        "suhu_d5", "lembap_d5", "debu_ke35", "gas_ke3", "debu_proj", "gas_proj"]
 
-# ------------------------------------------------------------------ data
 df = pd.read_csv(CSV_PATH)
 if "waktu" not in df.columns:
     df = pd.read_csv(CSV_PATH, sep=";", decimal=",")
 df["waktu"] = pd.to_datetime(df["waktu"])
 df = df.sort_values("waktu").dropna(subset=["debu", "gas", "suhu", "kelembapan"]).reset_index(drop=True)
 
-# Data asli dari alat dikirim tiap ~1 detik, sedangkan model dilatih & dijalankan di ESP32 per MENIT
-# (rata-rata 1 menit). Jika data lebih rapat dari itu, rata-ratakan dulu per menit.
 if df["waktu"].diff().median() < timedelta(seconds=45):
     print("Data rapat (<45 detik): dirata-ratakan per menit, status dihitung ulang dari rata-rata.")
     df = (df.set_index("waktu")[["debu", "gas", "suhu", "kelembapan"]].resample("1min").mean()
@@ -70,18 +53,15 @@ df["gas_proj"] = (df["gas"] + 5 * df["gas_d1"]) / 3
 df["sev_nanti"] = df["sev"].shift(-H)
 df.loc[(df["waktu"].shift(-H) - df["waktu"]) != timedelta(minutes=H), "sev_nanti"] = np.nan
 d = df.dropna(subset=FIT + ["sev_nanti"])
-d = d[d["sev"] < 2].reset_index(drop=True)          # yang sudah Berat tidak bisa memburuk lagi
+d = d[d["sev"] < 2].reset_index(drop=True)        
 d["naik"] = (d["sev_nanti"] > d["sev"]).astype(int)
 print(f"Baris: {len(d)} | kejadian memburuk dalam {H} menit: {d['naik'].sum()} ({d['naik'].mean() * 100:.1f}%)")
 
 
 def buat_model():
-    # kecil agar muat di ESP32
     return RandomForestClassifier(n_estimators=20, max_depth=8, min_samples_leaf=5,
                                   class_weight="balanced_subsample", random_state=SEED, n_jobs=-1)
 
-
-# ------------------------------------------------------------------ validasi lintas waktu
 oof = np.full(len(d), np.nan)
 for tr, te in TimeSeriesSplit(n_splits=5).split(d):
     tr = tr[tr < te[0] - H]
@@ -99,20 +79,17 @@ for th in np.arange(0.2, 0.81, 0.05):
     tabel.append({"ambang": round(float(th), 2), "recall": round(rec, 3), "presisi": round(pre, 3), "alarm_palsu_per_hari": round(fph, 1)})
     print(f"{th:5.2f}  {rec * 100:5.1f}%  {pre * 100:6.1f}%  {fph:10.1f}")
     if fph <= MAKS_ALARM_PALSU_PER_HARI and pilih is None:
-        pilih = tabel[-1]            # ambang terendah (recall tertinggi) yang alarm palsunya masih wajar
+        pilih = tabel[-1]            
 if pilih is None:
     pilih = tabel[-1]
 AMBANG = pilih["ambang"]
 print(f"\nAmbang dipilih: {AMBANG} -> {pilih}")
 
-# ------------------------------------------------------------------ model final (semua data)
 final = buat_model().fit(d[FIT], d["naik"])
 print(f"Model final: {len(final.estimators_)} pohon, {sum(e.tree_.node_count for e in final.estimators_)} node")
 print("Pentingnya fitur (gini):")
 print(pd.Series(final.feature_importances_, index=FIT).sort_values(ascending=False).round(3).head(8).to_string())
 
-
-# ------------------------------------------------------------------ ekspor C++
 def pohon_ke_cpp(est, nama):
     t = est.tree_
     baris = [f"static inline void {nama}(const float* x, float* votes) {{"]
@@ -155,7 +132,6 @@ h += [f"  aiPohon{i}(x, votes);" for i in range(n_pohon)]
 h += [f"  return votes[1] / {n_pohon}.0f;", "}"]
 (OUT / "model_rf_peringatan.h").write_text("\n".join(h), encoding="utf-8")
 
-# ------------------------------------------------------------------ data uji paritas (jendela 6 menit -> peluang sklearn)
 rng = np.random.default_rng(SEED)
 raw = df.set_index("waktu")
 contoh = []

@@ -1,5 +1,3 @@
-// Uji paritas: jalankan kode C++ (ai_peringatan.h + model_rf_peringatan.h) lewat transformasi sederhana ke JS,
-// lalu bandingkan peluangnya dengan sklearn. Dipakai karena tidak ada compiler C++ di PC ini.
 const fs = require("fs"), vm = require("vm");
 
 function keJS(src) {

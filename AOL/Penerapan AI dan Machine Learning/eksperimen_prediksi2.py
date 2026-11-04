@@ -1,4 +1,3 @@
-"""Eksperimen 2: model 'peringatan dini' = P(udara memburuk dalam H menit), diuji lintas lipatan waktu."""
 import sys
 from datetime import timedelta
 import numpy as np, pandas as pd
@@ -19,9 +18,9 @@ def selisih(kol, n):
 
 for k in ("debu", "gas"):
     df[f"{k}_d1"], df[f"{k}_d3"], df[f"{k}_d5"] = selisih(k, 1), selisih(k, 3), selisih(k, 5)
-    df[f"{k}_acc"] = df[f"{k}_d1"] - (df[f"{k}_d5"] - df[f"{k}_d1"]) / 4      # percepatan
+    df[f"{k}_acc"] = df[f"{k}_d1"] - (df[f"{k}_d5"] - df[f"{k}_d1"]) / 4      
 df["suhu_d5"], df["lembap_d5"] = selisih("suhu", 5), selisih("kelembapan", 5)
-# jarak ke ambang & proyeksi linear 5 menit ke depan
+
 df["debu_ke35"], df["gas_ke3"] = df["debu"] / 35, df["gas"] / 3
 df["debu_proj"] = (df["debu"] + 5 * df["debu_d1"]) / 35
 df["gas_proj"] = (df["gas"] + 5 * df["gas_d1"]) / 3
@@ -33,12 +32,12 @@ FIT = ["debu", "gas", "suhu", "kelembapan", "sev",
 df["sev_nanti"] = df["sev"].shift(-H)
 df.loc[(df["waktu"].shift(-H) - df["waktu"]) != timedelta(minutes=H), "sev_nanti"] = np.nan
 d = df.dropna(subset=FIT + ["sev_nanti"]).reset_index(drop=True)
-d = d[d["sev"] < 2].reset_index(drop=True)                 # kalau sudah Berat tidak bisa memburuk lagi
+d = d[d["sev"] < 2].reset_index(drop=True)                 
 d["naik"] = (d["sev_nanti"] > d["sev"]).astype(int)
 
 oof = np.full(len(d), np.nan)
 for tr, te in TimeSeriesSplit(n_splits=5).split(d):
-    tr = tr[tr < te[0] - H]                                 # beri jarak
+    tr = tr[tr < te[0] - H]                             
     m = RandomForestClassifier(n_estimators=200, max_depth=10, min_samples_leaf=3, class_weight="balanced_subsample",
                                random_state=42, n_jobs=-1).fit(d.loc[tr, FIT], d.loc[tr, "naik"])
     oof[te] = m.predict_proba(d.loc[te, FIT])[:, 1]
