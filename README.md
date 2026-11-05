@@ -81,8 +81,6 @@ An intelligent, adaptive air purification system that automatically adjusts fan 
 ---
 
 ## 📁 Repository Structure
-
-## 📁 Repository Structure
 ```
 ├── air_purifier_asg2_rule_based/      # Assignment 2: rule-based baseline (no AI)
 │   └── air_purifier_asg2_rule_based.ino
